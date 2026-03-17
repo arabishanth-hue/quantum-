@@ -2270,4 +2270,117 @@ setInterval(getPrice,30*1000);
 
 </script>
 </body>
-</html>
+</html><script>
+// ===============================
+// 🔥 IMPROVED TRADING ENGINE
+// ===============================
+
+function improvedEngine(factors, priceData){
+
+  let score = 0;
+
+  // ===== WEIGHTS =====
+  const W = {
+    ai: 0.20,
+    tech: 0.20,
+    rsi: 0.15,
+    econ: 0.10,
+    mtf: 0.15,
+    liq: 0.10,
+    struct: 0.10
+  };
+
+  // ===== SCORE =====
+  Object.keys(W).forEach(k=>{
+    score += (factors[k] || 0) * W[k];
+  });
+
+  // ===== MARKET FILTER =====
+  const volatility = getVolatility(priceData);
+  const trend = getTrend(priceData);
+
+  // ❌ Avoid bad market
+  if(volatility === 'LOW' || trend === 'SIDEWAYS'){
+    return noTrade("Bad market conditions");
+  }
+
+  // ===== CONFIDENCE =====
+  let confidence = Math.abs(score) * 100;
+
+  // ❌ STRICT FILTER
+  if(confidence < 65){
+    return noTrade("Low confidence");
+  }
+
+  // ===== DIRECTION =====
+  let dir = score > 0 ? "BUY" : "SELL";
+
+  // ===== ENTRY / SL / TP =====
+  let entry = priceData[priceData.length-1];
+  let atr = calcATR(priceData);
+
+  let sl = dir === "BUY"
+    ? entry - atr * 1.2
+    : entry + atr * 1.2;
+
+  let tp = dir === "BUY"
+    ? entry + atr * 2.5
+    : entry - atr * 2.5;
+
+  // ===== RISK REWARD CHECK =====
+  let rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+
+  if(rr < 2){
+    return noTrade("Bad RR");
+  }
+
+  return {
+    signal: "EURUSD " + dir,
+    dir: dir,
+    entry: entry.toFixed(5),
+    sl: sl.toFixed(5),
+    tp: tp.toFixed(5),
+    prob: Math.round(confidence),
+    score: score,
+    verdict: confidence > 75 ? "STRONG" : "MODERATE"
+  };
+}
+
+// ===============================
+// 🧠 HELPERS
+// ===============================
+
+function noTrade(reason){
+  return {
+    signal: "NO TRADE",
+    dir: "NO TRADE",
+    prob: 0,
+    score: 0,
+    verdict: reason
+  };
+}
+
+function getTrend(p){
+  let last = p[p.length-1];
+  let prev = p[p.length-10] || last;
+
+  if(last > prev) return "UP";
+  if(last < prev) return "DOWN";
+  return "SIDEWAYS";
+}
+
+function getVolatility(p){
+  let range = Math.max(...p.slice(-20)) - Math.min(...p.slice(-20));
+  if(range < 0.001) return "LOW";
+  if(range > 0.003) return "HIGH";
+  return "NORMAL";
+}
+
+function calcATR(p){
+  let sum = 0;
+  for(let i=1;i<p.length;i++){
+    sum += Math.abs(p[i] - p[i-1]);
+  }
+  return sum / p.length;
+}
+</script>
