@@ -2569,3 +2569,224 @@ function trailingStop(trade, currentPrice){
 }
 
 </script>
+<script>
+// ===============================
+// 🧠 PRO+ ENGINE (AI + NEWS FILTER)
+// ===============================
+
+const SETTINGS = {
+  minConfidence: 72,
+  maxTradesPerDay: 3,
+  riskPerTrade: 0.02,
+  minRR: 2,
+  cooldownMinutes: 30,
+  newsBlockMinutes: 30
+};
+
+let tradeHistory = [];
+let lastTradeTime = 0;
+
+// ===== AI WEIGHTS (dynamic) =====
+let weights = {
+  ai: 0.2,
+  tech: 0.2,
+  rsi: 0.15,
+  mtf: 0.15,
+  structure: 0.1,
+  liquidity: 0.1,
+  econ: 0.1
+};
+
+// ===============================
+// 🧠 MAIN ENGINE
+// ===============================
+function proPlusEngine(factors, priceData, balance=1000){
+
+  const now = Date.now();
+
+  // ===== NEWS FILTER =====
+  if(isHighImpactNewsTime()){
+    return noTrade("High impact news");
+  }
+
+  // ===== LIMITS =====
+  if(tradeHistory.length >= SETTINGS.maxTradesPerDay){
+    return noTrade("Daily limit reached");
+  }
+
+  if((now - lastTradeTime) < SETTINGS.cooldownMinutes * 60000){
+    return noTrade("Cooldown active");
+  }
+
+  // ===== SCORE =====
+  let score = 0;
+  Object.keys(weights).forEach(k=>{
+    score += (factors[k] || 0) * weights[k];
+  });
+
+  // ===== MARKET FILTER =====
+  const trend = getTrend(priceData);
+  const volatility = getVolatility(priceData);
+
+  if(trend === "SIDEWAYS"){
+    return noTrade("Sideways market");
+  }
+
+  if(volatility === "LOW"){
+    return noTrade("Low volatility");
+  }
+
+  // ===== CONFIDENCE =====
+  let confidence = Math.abs(score) * 100;
+
+  if(confidence < SETTINGS.minConfidence){
+    return noTrade("Weak signal");
+  }
+
+  // ===== TRADE =====
+  let dir = score > 0 ? "BUY" : "SELL";
+
+  let entry = last(priceData);
+  let atr = calcATR(priceData);
+
+  let sl = dir === "BUY"
+    ? entry - atr * 1.5
+    : entry + atr * 1.5;
+
+  let tp = dir === "BUY"
+    ? entry + atr * 3
+    : entry - atr * 3;
+
+  let rr = Math.abs(tp-entry) / Math.abs(entry-sl);
+
+  if(rr < SETTINGS.minRR){
+    return noTrade("Bad RR");
+  }
+
+  let lot = calcLotSize(balance, entry, sl);
+
+  lastTradeTime = now;
+
+  let trade = {
+    dir,
+    entry,
+    sl,
+    tp,
+    confidence,
+    factors
+  };
+
+  tradeHistory.push(trade);
+
+  return {
+    signal: dir,
+    entry: entry.toFixed(5),
+    sl: sl.toFixed(5),
+    tp: tp.toFixed(5),
+    lot: lot,
+    confidence: Math.round(confidence),
+    rr: rr.toFixed(2),
+    verdict: confidence > 80 ? "STRONG" : "GOOD"
+  };
+}
+
+// ===============================
+// 🧠 AI LEARNING SYSTEM
+// ===============================
+function updateAI(result, trade){
+
+  // result = "WIN" or "LOSS"
+
+  let learningRate = 0.05;
+
+  Object.keys(weights).forEach(k=>{
+    let impact = trade.factors[k] || 0;
+
+    if(result === "WIN"){
+      weights[k] += impact * learningRate;
+    } else {
+      weights[k] -= impact * learningRate;
+    }
+  });
+
+  // normalize weights
+  normalizeWeights();
+}
+
+// keep weights balanced
+function normalizeWeights(){
+  let sum = Object.values(weights).reduce((a,b)=>a+b,0);
+  Object.keys(weights).forEach(k=>{
+    weights[k] = weights[k] / sum;
+  });
+}
+
+// ===============================
+// 📰 NEWS FILTER (SMART)
+// ===============================
+function isHighImpactNewsTime(){
+
+  let now = new Date();
+  let hour = now.getUTCHours();
+
+  // 🔥 Major forex news times (approx)
+  let newsHours = [12, 13, 14]; // NY session news
+
+  return newsHours.includes(hour);
+}
+
+// ===============================
+// 💰 RISK MANAGEMENT
+// ===============================
+function calcLotSize(balance, entry, sl){
+  let risk = balance * SETTINGS.riskPerTrade;
+  let stopDistance = Math.abs(entry - sl);
+  let lot = risk / (stopDistance * 10000);
+  return lot.toFixed(2);
+}
+
+// ===============================
+// 📊 HELPERS
+// ===============================
+function last(arr){
+  return arr[arr.length - 1];
+}
+
+function getTrend(p){
+  let short = avg(p.slice(-10));
+  let long = avg(p.slice(-30));
+
+  if(short > long) return "UP";
+  if(short < long) return "DOWN";
+  return "SIDEWAYS";
+}
+
+function getVolatility(p){
+  let range = Math.max(...p.slice(-20)) - Math.min(...p.slice(-20));
+  if(range < 0.001) return "LOW";
+  if(range > 0.004) return "HIGH";
+  return "NORMAL";
+}
+
+function calcATR(p){
+  let sum = 0;
+  for(let i=1;i<p.length;i++){
+    sum += Math.abs(p[i] - p[i-1]);
+  }
+  return sum / p.length;
+}
+
+function avg(arr){
+  return arr.reduce((a,b)=>a+b,0)/arr.length;
+}
+
+function noTrade(reason){
+  return {
+    signal: "NO TRADE",
+    reason: reason
+  };
+}
+
+</script> 
+updateAI("WIN", trade);
+updateAI("LOSS", trade);
