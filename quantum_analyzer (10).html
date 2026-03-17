@@ -2384,3 +2384,188 @@ function calcATR(p){
   return sum / p.length;
 }
 </script>
+<script>
+// ===============================
+// 🧠 PRO TRADING ENGINE v2
+// ===============================
+
+const SETTINGS = {
+  minConfidence: 70,
+  maxTradesPerDay: 3,
+  riskPerTrade: 0.02, // 2%
+  minRR: 2,
+  cooldownMinutes: 30
+};
+
+let tradeHistory = [];
+let lastTradeTime = 0;
+
+// ===============================
+// MAIN ENGINE
+// ===============================
+function proEngine(factors, priceData, balance=1000){
+
+  const now = Date.now();
+
+  // ===== LIMIT TRADES =====
+  if(tradeHistory.length >= SETTINGS.maxTradesPerDay){
+    return noTrade("Daily trade limit reached");
+  }
+
+  if((now - lastTradeTime) < SETTINGS.cooldownMinutes * 60000){
+    return noTrade("Cooldown active");
+  }
+
+  // ===== SCORE SYSTEM =====
+  let score = weightedScore(factors);
+
+  // ===== MARKET FILTER =====
+  const trend = getTrend(priceData);
+  const volatility = getVolatility(priceData);
+
+  if(trend === "SIDEWAYS"){
+    return noTrade("Sideways market");
+  }
+
+  if(volatility === "LOW"){
+    return noTrade("Low volatility");
+  }
+
+  // ===== CONFIDENCE =====
+  let confidence = Math.abs(score) * 100;
+
+  if(confidence < SETTINGS.minConfidence){
+    return noTrade("Weak signal");
+  }
+
+  // ===== DIRECTION =====
+  let dir = score > 0 ? "BUY" : "SELL";
+
+  // ===== PRICE CALC =====
+  let entry = last(priceData);
+  let atr = calcATR(priceData);
+
+  let sl = dir === "BUY"
+    ? entry - atr * 1.5
+    : entry + atr * 1.5;
+
+  let tp = dir === "BUY"
+    ? entry + atr * 3
+    : entry - atr * 3;
+
+  // ===== RR CHECK =====
+  let rr = Math.abs(tp-entry) / Math.abs(entry-sl);
+  if(rr < SETTINGS.minRR){
+    return noTrade("Bad RR");
+  }
+
+  // ===== POSITION SIZE =====
+  let lot = calcLotSize(balance, entry, sl);
+
+  // ===== SAVE TRADE =====
+  lastTradeTime = now;
+  tradeHistory.push({
+    time: now,
+    dir,
+    confidence
+  });
+
+  return {
+    signal: dir,
+    entry: entry.toFixed(5),
+    sl: sl.toFixed(5),
+    tp: tp.toFixed(5),
+    lot: lot,
+    confidence: Math.round(confidence),
+    rr: rr.toFixed(2),
+    verdict: confidence > 80 ? "STRONG" : "GOOD"
+  };
+}
+
+// ===============================
+// 🔢 SCORE SYSTEM
+// ===============================
+function weightedScore(f){
+  return (
+    (f.ai || 0)*0.25 +
+    (f.tech || 0)*0.20 +
+    (f.rsi || 0)*0.15 +
+    (f.mtf || 0)*0.15 +
+    (f.structure || 0)*0.10 +
+    (f.liquidity || 0)*0.10 +
+    (f.econ || 0)*0.05
+  );
+}
+
+// ===============================
+// 💰 RISK MANAGEMENT
+// ===============================
+function calcLotSize(balance, entry, sl){
+  let risk = balance * SETTINGS.riskPerTrade;
+  let stopDistance = Math.abs(entry - sl);
+  let lot = risk / (stopDistance * 10000);
+  return lot.toFixed(2);
+}
+
+// ===============================
+// 📊 HELPERS
+// ===============================
+function last(arr){
+  return arr[arr.length - 1];
+}
+
+function getTrend(p){
+  let short = avg(p.slice(-10));
+  let long = avg(p.slice(-30));
+
+  if(short > long) return "UP";
+  if(short < long) return "DOWN";
+  return "SIDEWAYS";
+}
+
+function getVolatility(p){
+  let range = Math.max(...p.slice(-20)) - Math.min(...p.slice(-20));
+  if(range < 0.001) return "LOW";
+  if(range > 0.004) return "HIGH";
+  return "NORMAL";
+}
+
+function calcATR(p){
+  let sum = 0;
+  for(let i=1;i<p.length;i++){
+    sum += Math.abs(p[i] - p[i-1]);
+  }
+  return sum / p.length;
+}
+
+function avg(arr){
+  return arr.reduce((a,b)=>a+b,0)/arr.length;
+}
+
+function noTrade(reason){
+  return {
+    signal: "NO TRADE",
+    reason: reason
+  };
+}
+
+// ===============================
+// 🔁 OPTIONAL: TRAILING STOP
+// ===============================
+function trailingStop(trade, currentPrice){
+  if(trade.signal === "BUY"){
+    if(currentPrice - trade.entry > 0.001){
+      trade.sl = trade.entry; // break-even
+    }
+  }
+
+  if(trade.signal === "SELL"){
+    if(trade.entry - currentPrice > 0.001){
+      trade.sl = trade.entry;
+    }
+  }
+
+  return trade;
+}
+
+</script>
