@@ -3572,3 +3572,236 @@ drawZones(priceData);
   logTrade(result, "WIN"); 
 // or
 logTrade(result, "LOSS");
+<script>
+// ===============================
+// 💰 STOP LOSS + TAKE PROFIT
+// ===============================
+function getRiskLevels(signal, data){
+
+  let price = data[data.length-1];
+
+  // recent swing
+  let recentLow = Math.min(...data.slice(-10));
+  let recentHigh = Math.max(...data.slice(-10));
+
+  let sl, tp;
+
+  if(signal === "BUY"){
+    sl = recentLow; // below support
+    let risk = price - sl;
+    tp = price + (risk * 2); // RR 1:2
+  }
+
+  if(signal === "SELL"){
+    sl = recentHigh; // above resistance
+    let risk = sl - price;
+    tp = price - (risk * 2);
+  }
+
+  return { sl, tp };
+}
+</script>
+<script>
+let tradeCount = 0;
+let lossCount = 0;
+let lastResetDay = new Date().getDate();
+
+function canTrade(){
+
+  let today = new Date().getDate();
+
+  // reset daily
+  if(today !== lastResetDay){
+    tradeCount = 0;
+    lossCount = 0;
+    lastResetDay = today;
+  }
+
+  if(tradeCount >= 3){
+    return { allowed:false, reason:"Max trades reached" };
+  }
+
+  if(lossCount >= 2){
+    return { allowed:false, reason:"Max losses reached" };
+  }
+
+  return { allowed:true };
+}
+
+function recordTrade(result){
+
+  tradeCount++;
+
+  if(result === "LOSS"){
+    lossCount++;
+  }
+}
+</script>
+
+// 🚫 check if allowed to trade
+let check = canTrade();
+
+if(!check.allowed){
+  updateUI({ signal:"NO TRADE", reason:check.reason });
+  return;
+}
+
+// existing logic here...
+// smart signal → S/R → sniper → liquidity → probability
+
+// ✅ if passed everything:
+
+let risk = getRiskLevels(smart.signal, priceData);
+
+let factors = {
+  ai: smart.signal === "BUY" ? 1 : -1,
+  tech: 1,
+  rsi: smart.rsi > 50 ? -1 : 1,
+  mtf: smart.trend === "UP" ? 1 : -1,
+  structure: liqOk ? 1 : 0.5
+};
+
+let result = proMaxEngine(factors, priceData, 1000);
+
+result.confidence = probability;
+result.stopLoss = risk.sl;
+result.takeProfit = risk.tp;
+
+// show on UI
+updateUI(result);
+
+// count trade
+recordTrade("PENDING");
+  if(win){
+  recordTrade("WIN");
+  logTrade(result, "WIN");
+}else{
+  recordTrade("LOSS");
+  logTrade(result, "LOSS");
+}
+<body>
+
+<div class="container">
+
+  <h1>Quantum Analyzer Pro</h1>
+
+  <div class="card signal">
+    <h2 id="signal">WAITING...</h2>
+    <p id="confidence">Confidence: --%</p>
+  </div>
+
+  <div class="grid">
+
+    <div class="card">
+      <h3>Market Info</h3>
+      <p>Trend: <span id="trend">--</span></p>
+      <p>RSI: <span id="rsi">--</span></p>
+    </div>
+
+    <div class="card">
+      <h3>Risk Management</h3>
+      <p>Stop Loss: <span id="sl">--</span></p>
+      <p>Take Profit: <span id="tp">--</span></p>
+    </div>
+
+    <div class="card">
+      <h3>Trade Status</h3>
+      <p id="status">No Trade</p>
+    </div>
+
+  </div>
+
+  <div class="card journal">
+    <h3>Trade Journal</h3>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+</body>
+<style>
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.container {
+  max-width: 900px;
+  margin: auto;
+  padding: 20px;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: white;
+  padding: 15px;
+  border-radius: 12px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+  margin-bottom: 15px;
+}
+
+.signal {
+  text-align: center;
+}
+
+.signal h2 {
+  font-size: 28px;
+  margin: 10px 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 15px;
+}
+
+.journal {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+#log div {
+  font-size: 12px;
+  padding: 5px;
+  border-bottom: 1px solid #eee;
+}
+</style>
+<script>
+function updateUI(data){
+
+  document.getElementById("signal").innerText = data.signal || "NO TRADE";
+  document.getElementById("confidence").innerText = "Confidence: " + (data.confidence || 0) + "%";
+
+  document.getElementById("trend").innerText = data.trend || "--";
+  document.getElementById("rsi").innerText = data.rsi ? data.rsi.toFixed(2) : "--";
+
+  document.getElementById("sl").innerText = data.stopLoss ? data.stopLoss.toFixed(5) : "--";
+  document.getElementById("tp").innerText = data.takeProfit ? data.takeProfit.toFixed(5) : "--";
+
+  document.getElementById("status").innerText = data.signal === "NO TRADE" ? "Waiting..." : "Active Setup";
+}
+</script>
+<script>
+function updateUI(data){
+
+  let signalEl = document.getElementById("signal");
+
+  signalEl.innerText = data.signal || "NO TRADE";
+
+  if(data.signal === "BUY"){
+    signalEl.style.color = "green";
+  } else if(data.signal === "SELL"){
+    signalEl.style.color = "red";
+  } else {
+    signalEl.style.color = "#0f172a";
+  }
+
+  // rest same...
+}
+</script>
