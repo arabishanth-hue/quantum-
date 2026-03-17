@@ -2790,3 +2790,785 @@ function noTrade(reason){
 </script> 
 updateAI("WIN", trade);
 updateAI("LOSS", trade);
+<script>
+// ===============================
+// ⚙️ SETTINGS
+// ===============================
+const SETTINGS = {
+  minConfidence: 72,
+  maxTradesPerDay: 3,
+  riskPerTrade: 0.02,
+  minRR: 2,
+  cooldownMinutes: 30,
+  newsBlockMinutes: 30,
+  newsAPI: "YOUR_API_KEY_HERE"
+};
+
+// ===============================
+// 📊 GLOBAL STATE
+// ===============================
+let weights = {
+  ai: 0.2, tech: 0.2, rsi: 0.15,
+  mtf: 0.15, structure: 0.1,
+  liquidity: 0.1, econ: 0.1
+};
+
+let tradeHistory = [];
+let stats = {
+  wins: 0,
+  losses: 0,
+  profit: 0
+};
+
+let lastTradeTime = 0;
+let newsCache = [];
+
+// ===============================
+// 📰 REAL NEWS FETCH
+// ===============================
+async function fetchNews(){
+  try{
+    let res = await fetch(`https://forexnewsapi.com/api/v1/category?section=general&items=10&token=${SETTINGS.newsAPI}`);
+    let data = await res.json();
+    newsCache = data.data || [];
+  }catch(e){
+    console.log("News error", e);
+  }
+}
+
+// ===============================
+// 📰 NEWS FILTER (REAL)
+// ===============================
+function isHighImpactNews(){
+
+  let now = new Date();
+
+  return newsCache.some(n=>{
+    let time = new Date(n.published_at);
+    let diff = Math.abs(now - time) / 60000;
+
+    return diff < SETTINGS.newsBlockMinutes &&
+           (n.title.includes("USD") || n.title.includes("EUR"));
+  });
+}
+
+// ===============================
+// 🧠 MAIN ENGINE
+// ===============================
+function proMaxEngine(factors, priceData, balance=1000){
+
+  let now = Date.now();
+
+  if(isHighImpactNews()){
+    return noTrade("News risk");
+  }
+
+  if(tradeHistory.length >= SETTINGS.maxTradesPerDay){
+    return noTrade("Daily limit");
+  }
+
+  if(now - lastTradeTime < SETTINGS.cooldownMinutes*60000){
+    return noTrade("Cooldown");
+  }
+
+  // ===== SCORE =====
+  let score = 0;
+  Object.keys(weights).forEach(k=>{
+    score += (factors[k] || 0) * weights[k];
+  });
+
+  // ===== FILTER =====
+  if(getTrend(priceData) === "SIDEWAYS"){
+    return noTrade("Sideways");
+  }
+
+  if(getVolatility(priceData) === "LOW"){
+    return noTrade("Low volatility");
+  }
+
+  let confidence = Math.abs(score) * 100;
+
+  if(confidence < SETTINGS.minConfidence){
+    return noTrade("Weak signal");
+  }
+
+  // ===== TRADE =====
+  let dir = score > 0 ? "BUY" : "SELL";
+  let entry = last(priceData);
+  let atr = calcATR(priceData);
+
+  let sl = dir==="BUY" ? entry-atr*1.5 : entry+atr*1.5;
+  let tp = dir==="BUY" ? entry+atr*3 : entry-atr*3;
+
+  let rr = Math.abs(tp-entry)/Math.abs(entry-sl);
+
+  if(rr < SETTINGS.minRR){
+    return noTrade("Bad RR");
+  }
+
+  let lot = calcLot(balance, entry, sl);
+
+  lastTradeTime = now;
+
+  let trade = {
+    dir, entry, sl, tp, factors, confidence
+  };
+
+  tradeHistory.push(trade);
+
+  return {
+    signal: dir,
+    entry: entry.toFixed(5),
+    sl: sl.toFixed(5),
+    tp: tp.toFixed(5),
+    lot: lot,
+    confidence: Math.round(confidence),
+    rr: rr.toFixed(2)
+  };
+}
+
+// ===============================
+// 🧠 AI LEARNING
+// ===============================
+function updateAI(result, trade){
+
+  let rate = 0.05;
+
+  Object.keys(weights).forEach(k=>{
+    let impact = trade.factors[k] || 0;
+
+    if(result==="WIN"){
+      weights[k] += impact * rate;
+      stats.wins++;
+      stats.profit += 2;
+    } else {
+      weights[k] -= impact * rate;
+      stats.losses++;
+      stats.profit -= 1;
+    }
+  });
+
+  normalizeWeights();
+}
+
+// ===============================
+// 🔁 BACKTEST SYSTEM
+// ===============================
+function runBacktest(priceData){
+
+  let balance = 1000;
+  let wins=0, losses=0;
+
+  for(let i=50;i<priceData.length;i++){
+
+    let slice = priceData.slice(0,i);
+
+    let fakeFactors = {
+      ai: Math.random()*2-1,
+      tech: Math.random()*2-1,
+      rsi: Math.random()*2-1,
+      mtf: Math.random()*2-1
+    };
+
+    let trade = proMaxEngine(fakeFactors, slice, balance);
+
+    if(trade.signal==="NO TRADE") continue;
+
+    let result = Math.random()>0.5 ? "WIN":"LOSS";
+
+    if(result==="WIN"){
+      balance += balance*0.02;
+      wins++;
+    } else {
+      balance -= balance*0.02;
+      losses++;
+    }
+  }
+
+  return {
+    finalBalance: balance.toFixed(2),
+    winRate: (wins/(wins+losses)*100).toFixed(1)+"%"
+  };
+}
+
+// ===============================
+// 💰 LOT SIZE
+// ===============================
+function calcLot(balance, entry, sl){
+  let risk = balance * SETTINGS.riskPerTrade;
+  let dist = Math.abs(entry-sl);
+  return (risk/(dist*10000)).toFixed(2);
+}
+
+// ===============================
+// 📊 HELPERS
+// ===============================
+function last(a){ return a[a.length-1]; }
+
+function avg(a){ return a.reduce((x,y)=>x+y,0)/a.length; }
+
+function getTrend(p){
+  let s = avg(p.slice(-10));
+  let l = avg(p.slice(-30));
+  if(s>l) return "UP";
+  if(s<l) return "DOWN";
+  return "SIDEWAYS";
+}
+
+function getVolatility(p){
+  let r = Math.max(...p.slice(-20)) - Math.min(...p.slice(-20));
+  if(r<0.001) return "LOW";
+  if(r>0.004) return "HIGH";
+  return "NORMAL";
+}
+
+function calcATR(p){
+  let sum=0;
+  for(let i=1;i<p.length;i++){
+    sum+=Math.abs(p[i]-p[i-1]);
+  }
+  return sum/p.length;
+}
+
+function normalizeWeights(){
+  let sum = Object.values(weights).reduce((a,b)=>a+b,0);
+  Object.keys(weights).forEach(k=>{
+    weights[k] /= sum;
+  });
+}
+
+function noTrade(reason){
+  return { signal:"NO TRADE", reason };
+}
+
+// ===============================
+// 🚀 INIT
+// ===============================
+fetchNews(); // load news on start
+setInterval(fetchNews, 600000); // refresh every 10 min
+
+</script>
+runBacktest(priceData);
+<div id="proPanel" style="position:fixed;top:10px;right:10px;background:#0f172a;color:white;padding:15px;border-radius:10px;width:260px;font-family:sans-serif;z-index:9999;box-shadow:0 0 20px rgba(0,0,0,0.5)">
+  <h3>🚀 PRO AI PANEL</h3>
+  <div>Signal: <span id="signal">-</span></div>
+  <div>Confidence: <span id="confidence">-</span>%</div>
+  <div>RR: <span id="rr">-</span></div>
+  <div>Trend: <span id="trend">-</span></div>
+  <hr>
+  <div>Wins: <span id="wins">0</span></div>
+  <div>Losses: <span id="losses">0</span></div>
+  <div>Profit: <span id="profit">0</span></div>
+</div>
+<script>
+// ===============================
+// 🔔 ALERT SYSTEM
+// ===============================
+
+// request notification permission
+if (Notification.permission !== "granted") {
+  Notification.requestPermission();
+}
+
+// play sound
+function playAlertSound(){
+  let audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+  audio.play();
+}
+
+// show browser notification
+function sendNotification(text){
+  if(Notification.permission === "granted"){
+    new Notification("Trading Signal", { body: text });
+  }
+}
+
+// popup alert
+function popupAlert(text){
+  alert(text);
+}
+
+// ===============================
+// 📊 UI UPDATE
+// ===============================
+function updateUI(result){
+
+  if(result.signal === "NO TRADE") return;
+
+  document.getElementById("signal").innerText = result.signal;
+  document.getElementById("confidence").innerText = result.confidence;
+  document.getElementById("rr").innerText = result.rr;
+
+  let trend = result.signal === "BUY" ? "UPTREND" : "DOWNTREND";
+  document.getElementById("trend").innerText = trend;
+
+  // stats
+  document.getElementById("wins").innerText = stats.wins;
+  document.getElementById("losses").innerText = stats.losses;
+  document.getElementById("profit").innerText = stats.profit;
+
+  // 🔥 TRIGGER ALERTS
+  if(result.confidence >= 80){
+    let msg = `${result.signal} | Confidence ${result.confidence}%`;
+
+    playAlertSound();
+    sendNotification(msg);
+    popupAlert(msg);
+  }
+}
+
+</script>
+let result = proMaxEngine(factors, priceData, 1000);
+updateUI(result);
+updateAI("WIN", lastTrade); 
+// OR
+updateAI("LOSS", lastTrade);
+<script>
+setInterval(()=>{
+
+  let fakeFactors = {
+    ai: Math.random()*2-1,
+    tech: Math.random()*2-1,
+    rsi: Math.random()*2-1,
+    mtf: Math.random()*2-1,
+    structure: Math.random()*2-1
+  };
+
+  let fakePrices = Array.from({length:100}, (_,i)=>1.10 + Math.sin(i/5)*0.002);
+
+  let result = proMaxEngine(fakeFactors, fakePrices, 1000);
+
+  updateUI(result);
+
+}, 5000); // every 5 sec
+
+</script>
+<script>
+// ===============================
+// 📊 EMA (Trend)
+// ===============================
+function calcEMA(data, period){
+  let k = 2 / (period + 1);
+  let ema = data[0];
+
+  for(let i=1;i<data.length;i++){
+    ema = data[i] * k + ema * (1 - k);
+  }
+
+  return ema;
+}
+
+// ===============================
+// 📊 RSI
+// ===============================
+function calcRSI(data, period=14){
+
+  let gains = 0, losses = 0;
+
+  for(let i=1;i<=period;i++){
+    let diff = data[data.length - i] - data[data.length - i -1];
+    if(diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+
+  let rs = gains / (losses || 1);
+  let rsi = 100 - (100 / (1 + rs));
+
+  return rsi;
+}
+
+// ===============================
+// 🧠 SMART SIGNAL
+// ===============================
+function getSmartSignal(priceData){
+
+  let emaFast = calcEMA(priceData.slice(-50), 10);
+  let emaSlow = calcEMA(priceData.slice(-50), 20);
+  let rsi = calcRSI(priceData, 14);
+
+  // ===== TREND =====
+  let trend = "SIDEWAYS";
+  if(emaFast > emaSlow) trend = "UP";
+  if(emaFast < emaSlow) trend = "DOWN";
+
+  // ===== ENTRY RULES =====
+  if(trend === "UP" && rsi < 35){
+    return { signal: "BUY", strength: 80, rsi, trend };
+  }
+
+  if(trend === "DOWN" && rsi > 65){
+    return { signal: "SELL", strength: 80, rsi, trend };
+  }
+
+  return { signal: "NO TRADE", rsi, trend };
+}
+
+</script>
+// inside your loop
+
+let priceData = await getRealPrice();
+
+let smart = getSmartSignal(priceData);
+
+if(smart.signal === "NO TRADE"){
+  updateUI({ signal:"NO TRADE" });
+  return;
+}
+
+// convert to engine format
+let factors = {
+  ai: smart.signal === "BUY" ? 1 : -1,
+  tech: smart.signal === "BUY" ? 1 : -1,
+  rsi: smart.rsi > 50 ? -1 : 1,
+  mtf: smart.trend === "UP" ? 1 : -1,
+  structure: 1
+};
+
+let result = proMaxEngine(factors, priceData, 1000);
+
+// inject real confidence
+result.confidence = smart.strength;
+
+updateUI(result);
+<script>
+// ===============================
+// 🕯️ CANDLE HELPERS
+// ===============================
+function getCandle(data, i){
+  return {
+    open: data[i-1],
+    close: data[i],
+    high: Math.max(data[i], data[i-1]),
+    low: Math.min(data[i], data[i-1])
+  };
+}
+
+// ===============================
+// 🟢 BULLISH ENGULFING
+// ===============================
+function isBullishEngulfing(data){
+
+  let c1 = getCandle(data, data.length-2);
+  let c2 = getCandle(data, data.length-1);
+
+  return (
+    c1.close < c1.open && // red
+    c2.close > c2.open && // green
+    c2.close > c1.open &&
+    c2.open < c1.close
+  );
+}
+
+// ===============================
+// 🔴 BEARISH ENGULFING
+// ===============================
+function isBearishEngulfing(data){
+
+  let c1 = getCandle(data, data.length-2);
+  let c2 = getCandle(data, data.length-1);
+
+  return (
+    c1.close > c1.open && // green
+    c2.close < c2.open && // red
+    c2.open > c1.close &&
+    c2.close < c1.open
+  );
+}
+
+// ===============================
+// 📍 PIN BAR
+// ===============================
+function isPinBar(data){
+
+  let c = getCandle(data, data.length-1);
+
+  let body = Math.abs(c.close - c.open);
+  let wick = (c.high - c.low);
+
+  return wick > body * 2;
+}
+
+// ===============================
+// 🎯 SNIPER CONFIRMATION
+// ===============================
+function sniperConfirm(signal, data){
+
+  if(signal === "BUY"){
+    if(isBullishEngulfing(data) || isPinBar(data)){
+      return true;
+    }
+  }
+
+  if(signal === "SELL"){
+    if(isBearishEngulfing(data) || isPinBar(data)){
+      return true;
+    }
+  }
+
+  return false;
+}
+
+</script>
+// get smart signal first
+let smart = getSmartSignal(priceData);
+
+// ❌ no trade
+if(smart.signal === "NO TRADE"){
+  updateUI({ signal:"NO TRADE" });
+  return;
+}
+
+// 🎯 SNIPER FILTER
+let confirmed = sniperConfirm(smart.signal, priceData);
+
+if(!confirmed){
+  updateUI({ signal:"NO TRADE", reason:"No candle confirmation" });
+  return;
+}
+<script>
+// ===============================
+// 🧱 SUPPORT & RESISTANCE
+// ===============================
+function getSupportResistance(data){
+
+  let highs = [];
+  let lows = [];
+
+  for(let i=5;i<data.length-5;i++){
+
+    let slice = data.slice(i-5,i+5);
+
+    let max = Math.max(...slice);
+    let min = Math.min(...slice);
+
+    if(data[i] === max){
+      highs.push(data[i]);
+    }
+
+    if(data[i] === min){
+      lows.push(data[i]);
+    }
+  }
+
+  return {
+    resistance: highs.slice(-3),
+    support: lows.slice(-3)
+  };
+}
+
+// ===============================
+// 💧 LIQUIDITY GRAB
+// ===============================
+function detectLiquidityGrab(data){
+
+  let last = data[data.length-1];
+  let prev = data[data.length-2];
+
+  let range = Math.abs(last - prev);
+
+  // big spike = possible stop hunt
+  if(range > 0.002){
+
+    // fake breakout up
+    if(last > prev){
+      return "FAKE_UP";
+    }
+
+    // fake breakout down
+    if(last < prev){
+      return "FAKE_DOWN";
+    }
+  }
+
+  return null;
+}
+
+// ===============================
+// 🎯 S/R FILTER
+// ===============================
+function respectSR(signal, data){
+
+  let sr = getSupportResistance(data);
+  let price = data[data.length-1];
+
+  let nearResistance = sr.resistance.some(r => Math.abs(price - r) < 0.001);
+  let nearSupport = sr.support.some(s => Math.abs(price - s) < 0.001);
+
+  // block bad trades
+  if(signal === "BUY" && nearResistance){
+    return false;
+  }
+
+  if(signal === "SELL" && nearSupport){
+    return false;
+  }
+
+  return true;
+}
+
+// ===============================
+// 🎯 LIQUIDITY CONFIRMATION
+// ===============================
+function liquidityConfirm(signal, data){
+
+  let grab = detectLiquidityGrab(data);
+
+  if(signal === "BUY" && grab === "FAKE_DOWN"){
+    return true;
+  }
+
+  if(signal === "SELL" && grab === "FAKE_UP"){
+    return true;
+  }
+
+  return false;
+}
+
+</script>
+
+// 1. Smart signal
+let smart = getSmartSignal(priceData);
+
+if(smart.signal === "NO TRADE"){
+  updateUI({ signal:"NO TRADE" });
+  return;
+}
+
+// 2. S/R FILTER
+if(!respectSR(smart.signal, priceData)){
+  updateUI({ signal:"NO TRADE", reason:"Bad S/R zone" });
+  return;
+}
+
+// 3. SNIPER CANDLE
+if(!sniperConfirm(smart.signal, priceData)){
+  updateUI({ signal:"NO TRADE", reason:"No candle confirmation" });
+  return;
+}
+
+// 4. LIQUIDITY (STRONG CONFIRMATION)
+let liqOk = liquidityConfirm(smart.signal, priceData);
+
+// optional: require it OR boost confidence
+if(!liqOk){
+  smart.strength -= 10; // weaker trade
+}
+
+// 5. Continue to engine
+let factors = {
+  ai: smart.signal === "BUY" ? 1 : -1,
+  tech: smart.signal === "BUY" ? 1 : -1,
+  rsi: smart.rsi > 50 ? -1 : 1,
+  mtf: smart.trend === "UP" ? 1 : -1,
+  structure: liqOk ? 1 : 0.5
+};
+
+let result = proMaxEngine(factors, priceData, 1000);
+result.confidence = smart.strength;
+
+updateUI(result);
+<div id="zonesPanel" style="position:fixed;bottom:10px;right:10px;background:#020617;color:#38bdf8;padding:10px;border-radius:10px;width:260px;font-size:12px;z-index:9999">
+  <b>📊 KEY LEVELS</b>
+  <div id="zones"></div>
+</div>
+<script>
+function drawZones(data){
+
+  let sr = getSupportResistance(data);
+
+  let html = "<b>Resistance:</b><br>";
+  sr.resistance.forEach(r=>{
+    html += "🔴 " + r.toFixed(5) + "<br>";
+  });
+
+  html += "<br><b>Support:</b><br>";
+  sr.support.forEach(s=>{
+    html += "🟢 " + s.toFixed(5) + "<br>";
+  });
+
+  document.getElementById("zones").innerHTML = html;
+}
+</script>
+<script>
+// ===============================
+// 📊 WIN PROBABILITY
+// ===============================
+function calculateProbability(smart, liqOk, srOk){
+
+  let score = 0;
+
+  // trend + rsi alignment
+  if(smart.trend !== "SIDEWAYS") score += 25;
+
+  if(
+    (smart.signal==="BUY" && smart.rsi < 40) ||
+    (smart.signal==="SELL" && smart.rsi > 60)
+  ){
+    score += 20;
+  }
+
+  // sniper confirmation assumed already
+  score += 20;
+
+  // liquidity boost
+  if(liqOk) score += 20;
+
+  // S/R respect
+  if(srOk) score += 15;
+
+  return score; // out of 100
+}
+</script>
+
+// 1. Smart signal
+let smart = getSmartSignal(priceData);
+
+if(smart.signal === "NO TRADE"){
+  updateUI({ signal:"NO TRADE" });
+  return;
+}
+
+// 2. S/R
+let srOk = respectSR(smart.signal, priceData);
+if(!srOk){
+  updateUI({ signal:"NO TRADE", reason:"S/R conflict" });
+  return;
+}
+
+// 3. Sniper
+if(!sniperConfirm(smart.signal, priceData)){
+  updateUI({ signal:"NO TRADE", reason:"No confirmation" });
+  return;
+}
+
+// 4. Liquidity
+let liqOk = liquidityConfirm(smart.signal, priceData);
+
+// 5. Probability
+let probability = calculateProbability(smart, liqOk, srOk);
+
+if(probability < 70){
+  updateUI({ signal:"NO TRADE", reason:"Low probability" });
+  return;
+}
+
+// 6. Execute trade
+let factors = {
+  ai: smart.signal === "BUY" ? 1 : -1,
+  tech: 1,
+  rsi: smart.rsi > 50 ? -1 : 1,
+  mtf: smart.trend === "UP" ? 1 : -1,
+  structure: liqOk ? 1 : 0.5
+};
+
+let result = proMaxEngine(factors, priceData, 1000);
+result.confidence = probability;
+
+// 7. Update UI
+updateUI(result);
+
+// 8. Draw zones
+drawZones(priceData);
+  logTrade(result, "WIN"); 
+// or
+logTrade(result, "LOSS");
